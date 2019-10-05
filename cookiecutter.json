@@ -1,0 +1,13 @@
+{
+  "project_name": "MyProject",
+  "project_slug": "{{ cookiecutter.project_name.lower()|replace(' ', '_')|replace('-', '_')|replace('.', '_')|trim() }}",
+  "description": "My Project!",
+  "author_name": "Anon",
+    "postgres_host": "localhost",
+    "postgres_db": "{{cookiecutter.project_slug}}_db",
+    "postgres_user": "{{cookiecutter.project_slug}}",
+    "postgres_password": "{{cookiecutter.project_slug}}",
+    "postgres_port": "5432",
+  "email": "{{ cookiecutter.author_name.lower()|replace(' ', '-') }}@gmail.com"
+
+}

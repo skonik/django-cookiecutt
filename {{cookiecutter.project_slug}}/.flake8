@@ -1,0 +1,5 @@
+[flake8]
+ignore = F841,W503
+exclude = .git,__pycache__,logs,var,*/migrations/*
+max-line-length = 100
+per-file-ignores = */__init__.py:F401

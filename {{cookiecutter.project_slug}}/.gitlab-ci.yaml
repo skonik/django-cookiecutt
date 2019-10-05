@@ -1,0 +1,206 @@
+stages:
+  - build_ci_image
+  - lint
+  - test
+  - build_image
+
+services:
+  - docker:stable-dind  # service for using docker in docker. https://docs.gitlab.com/ee/ci/docker/using_docker_build.html
+
+variables:
+  DOCKER_HOST: tcp://localhost:2375  # Variables used for docker in docker. https://docs.gitlab.com/ee/ci/docker/using_docker_build.html
+  DOCKER_DRIVER: overlay2
+
+  CI_DOCKER_IMAGE: ${CI_REGISTRY_IMAGE}/ci
+  IMAGE: ${CI_REGISTRY_IMAGE}/${CI_COMMIT_REF_SLUG}
+
+
+.bulid_job_common: &bulid_job_common
+  image: docker:stable
+  script:
+    - docker login -u gitlab-ci-token -p ${CI_JOB_TOKEN} ${CI_REGISTRY}
+    # Pull image for cache and not fail in case if the image does not exist
+    - docker pull ${CI_DOCKER_IMAGE} || true
+    - docker pull ${IMAGE} || true
+    # Build image from cache
+    - docker build --cache-from ${IMAGE} --cache-from ${CI_DOCKER_IMAGE}  -t ${IMAGE} --build-arg DJANGO_ENV=${DJANGO_ENV} -f ${DOCKERFILE} .
+    # Push main image to registry
+    - docker push ${IMAGE}
+  only:
+    - master
+    - stage
+    - test
+    - develop
+    - /^sprint\/.*/
+  tags:
+    - kube
+
+rebuild_ci-image:
+  <<: *bulid_job_common
+  stage: build_ci_image
+  variables:
+    DOCKERFILE: 'docker/dockerfiles/CI.Dockerfile'
+  only:
+    - merge_requests
+  when: manual
+  before_script:
+    - export IMAGE=${CI_DOCKER_IMAGE}
+
+build_image:ci:
+  <<: *bulid_job_common
+  stage: build_ci_image
+  variables:
+    DOCKERFILE: 'docker/dockerfiles/CI.Dockerfile'
+  before_script:
+    - export IMAGE=${CI_DOCKER_IMAGE}
+
+
+lint:flake8:
+  stage: lint
+  image: python:3.7.4-alpine3.10
+  script:
+    - pip3 install --no-cache-dir flake8
+    - flake8 .
+  only:
+    - master
+    - stage
+    - test
+    - develop
+    - /^sprint\/.*/
+    - merge_requests
+  tags:
+    - kube
+
+lint:flake8-helpers:
+  stage: lint
+  image: python:3.7.4-alpine3.10
+  script:
+    - pip3 install --no-cache-dir flake8 flake8-bugbear
+    - flake8 source
+  only:
+    - master
+    - stage
+    - test
+    - develop
+    - merge_requests
+  allow_failure: true
+  tags:
+    - kube
+
+lint:isort:
+  stage: lint
+  image: python:3.7.4-alpine3.10
+  script:
+    - pip install isort
+    - cd source
+    - isort --check-only -vb
+  only:
+    - master
+    - stage
+    - test
+    - develop
+    - /^sprint\/.*/
+    - merge_requests
+  allow_failure: true
+  tags:
+    - kube
+
+test:with_coverage:
+  stage: test
+  image: ${CI_DOCKER_IMAGE}
+  services:
+    - name: postgres:12-alpine
+      alias: postgres
+    - name: redis:4-alpine
+      alias: redis
+  variables:
+    # Postgres
+    POSTGRES_DB: test
+    POSTGRES_USER: test
+    POSTGRES_USERNAME: test
+    POSTGRES_PASSWORD: test
+    POSTGRES_HOST: localhost
+    DJANGO_USE_S3_STORAGE: "false"
+    # Coverage
+    COVERAGE_FAIL_UNDER: 80
+  script:
+    - timeout 30 python3 docker/wait_postgres.py
+    - cd source
+    - ./manage.py check
+    - coverage run --source='.' manage.py test
+    - coverage report --fail-under ${COVERAGE_FAIL_UNDER}
+    - coverage html
+  coverage: '/^TOTAL.*\s+(\d+\%)$/'
+  artifacts:
+    paths:
+      - source/htmlcov/
+  only:
+    - master
+    - stage
+    - test
+    - develop
+    - /^sprint\/.*/
+    - merge_requests
+  tags:
+    - kube
+
+test:safety:
+  stage: test
+  image: python:3.7-alpine
+  script:
+    - pip install safety
+    - safety check --full-report
+  allow_failure: true
+  only:
+    - master
+    - stage
+    - test
+    - develop
+    - /^sprint\/.*/
+    - merge_requests
+  tags:
+    - kube
+
+build-image:develop:
+  <<: *bulid_job_common
+  stage: build_image
+  variables:
+    DOCKERFILE: 'docker/dockerfiles/Dockerfile'
+    DJANGO_ENV: 'dev'
+  only:
+    - develop
+  tags:
+    - kube
+
+build-image:test:
+  <<: *bulid_job_common
+  stage: build_image
+  variables:
+    DOCKERFILE: 'docker/dockerfiles/Dockerfile'
+    DJANGO_ENV: 'test'
+  only:
+    - test
+  tags:
+    - kube
+
+build-image:stage:
+  <<: *bulid_job_common
+  stage: build_image
+  variables:
+    DOCKERFILE: 'docker/dockerfiles/Dockerfile'
+    DJANGO_ENV: 'stage'
+  only:
+    - stage
+  tags:
+    - kube
+
+build-image:production:
+  <<: *bulid_job_common
+  stage: build_image
+  variables:
+    DOCKERFILE: 'docker/dockerfiles/Dockerfile'
+    DJANGO_ENV: 'prod'
+  only:
+    - master
+  tags:
+    - kube
